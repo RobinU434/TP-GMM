@@ -1,15 +1,14 @@
-import time
 from typing import Any, Dict, Tuple
 
 import numpy as np
-from numpy import ndarray
+import torch
+from torch import Tensor
 from sklearn import metrics
 from sklearn.cluster import KMeans
 import itertools
 
 from tpgmm.utils.learning_modules import ClassificationModule
 from tpgmm.utils.arrays import identity_like
-from tpgmm.utils.stochastic import multivariate_gauss_cdf
 
 
 class TPGMM(ClassificationModule):
@@ -74,8 +73,8 @@ class TPGMM(ClassificationModule):
         threshold: float = 1e-7,
         max_iter: int = 100,
         min_iter: int = 5,
-        weights_init: ndarray = None,
-        means_init: ndarray = None,
+        weights_init: Tensor = None,
+        means_init: Tensor = None,
         reg_factor: float = 1e-5,
         verbose: bool = False,
     ) -> None:
@@ -87,8 +86,8 @@ class TPGMM(ClassificationModule):
             threshold (float): Threshold to break from EM algorithm. Defaults to 1e-3.
             max_iter (int): Maximum number of iterations to perform the expectation maximization algorithm. Defaults to 100.
             min_iter (int): Minimum number of iterations to perform the expectation maximization algorithm. Defaults to 5.
-            weights_init (ndarray): Initial weights between each component. If set, it replaces initialization from K-Means. Defaults to None.
-            means_init (ndarray): Initial means between each component. If set, it replaces initialization from K-Means. Defaults to None.
+            weights_init (Tensor): Initial weights between each component. If set, it replaces initialization from K-Means. Defaults to None.
+            means_init (Tensor): Initial means between each component. If set, it replaces initialization from K-Means. Defaults to None.
             reg_factor (float): Regularization factor for the empirical covariance matrix. Defaults to 1e-5.
             verbose (bool): Triggers print of learning stats. Defaults to False.
         """
@@ -97,7 +96,6 @@ class TPGMM(ClassificationModule):
         self._min_iter = min_iter
         self._threshold = threshold
         self._reg_factor = reg_factor
-
         self._verbose = verbose
 
         self._k_means_algo = KMeans(
@@ -105,187 +103,18 @@ class TPGMM(ClassificationModule):
         )
         """KMeans: algorithm to initialize unsupervised clustering"""
         self._cov_reg_matrix = None
-        """ndarray: to avoid singularities. shape: (num_frames, n_components, num_features, num_features)"""
+        """Tensor: to avoid singularities. shape: (num_frames, n_components, num_features, num_features)"""
 
         self.weights_ = weights_init
-        """ndarray: Weights between gaussian mixture models shape: (n_components)"""
+        """Tensor: Weights between gaussian mixture models shape: (n_components)"""
 
         self.means_ = means_init
-        """ndarray: mean matrix for each frame and component: (num_frames, n_components, num_features)"""
+        """Tensor: mean matrix for each frame and component: (num_frames, n_components, num_features)"""
 
         self.covariances_ = None
-        """ndarray: covariance matrix for each frame and component. Shape: (num_frames, n_components, num_features, num_features)"""
+        """Tensor: covariance matrix for each frame and component. Shape: (num_frames, n_components, num_features, num_features)"""
 
-    def _k_means(
-        self,
-        X: ndarray,
-    ) -> Tuple[ndarray, ndarray]:
-        """calculate k means clustering on each frame and calculates the
-            empirical covariance matrix for each cluster.
-
-        For more details on k means clustering algorithm please refer to: https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html
-
-        Args:
-            X (ndarray): data in feature space for k means clustering.
-                shape: (num_frames, num_points, num_features)
-
-        Returns:
-            Tuple[ndarray, ndarray]:
-             - means with shape: (num_frames, n_components, num_features)
-             - covariance matrix with shape: (num_frames, n_components, num_features, num_features)
-        """
-        num_frames, _, num_features = X.shape
-        means = np.empty((num_frames, self._n_components, num_features))
-        covariances = np.empty(
-            (num_frames, self._n_components, num_features, num_features)
-        )
-        for frame_idx, frame_data in enumerate(X):
-            self._k_means_algo.fit(frame_data)
-            # get mean
-            means[frame_idx] = self._k_means_algo.cluster_centers_
-            for cluster_idx in range(self._n_components):
-                data_idx = np.argwhere(
-                    self._k_means_algo.labels_ == cluster_idx
-                ).squeeze()
-                covariances[frame_idx, cluster_idx] = np.cov(frame_data[data_idx].T)
-
-        # regularization
-        reg_matrix = identity_like(covariances) * self._reg_factor
-        covariances += reg_matrix
-
-        return means, covariances
-
-    def gauss_cdf(self, X: ndarray) -> ndarray:
-        """calculate the gaussian probability for a given data set.
-        \f[
-            \mathcal{N}\left(X_t^{(j)} \mid \mu_i^{(j)}, \Sigma_i^{(j)}\right) = \frac{1}{\sqrt{(2\pi)^D|\Sigma_i^{(j)}|}} \exp \left( \frac{1}{2}(X_t^{(j)} - \mu_i^{(j)})\Sigma_i^{(j), -1}(X_t^{(j)} - \mu_i^{(j)})^T\right)
-        \f]
-
-        Variable explanation:
-        D ... number of features
-
-        Args:
-            X (ndarray): data with shape: (num_frames, num_points, num_features)
-
-        Returns:
-            ndarray: probability shape (num_frames, n_components, num_points)
-        """
-        num_frames, num_points, _ = X.shape
-        probs = np.empty((num_frames, self._n_components, num_points))
-        # to prevent singularity matrices
-        covariances = self.covariances_ + self._cov_reg_matrix
-        for frame_idx, component_idx in itertools.product(
-            range(num_frames), range(self._n_components)
-        ):
-            frame_data = X[frame_idx]
-            cluster_mean = self.means_[frame_idx, component_idx]
-            cluster_cov = covariances[frame_idx, component_idx]
-            probs[frame_idx, component_idx] = multivariate_gauss_cdf(
-                frame_data, cluster_mean, cluster_cov
-            )
-        return probs
-        
-    def _update_h(self, probabilities: ndarray) -> ndarray:
-        """update h parameter according to equation 49 in appendix 1
-        \f[
-            h_{t, i} = \frac{\pi_i \prod_{j=1}^P \mathcal{N}\left(X_t^{(j)} \mid \mu_i^{(j)}, \Sigma_i^{(j)}\right)}{\sum_{k=1}^K \pi_k \prod_{j=1}^P \mathcal{N}\left(X_t^{(j)} \mid \mu_k^{(j)}, \Sigma_k^{(j)}\right)}
-        \f]
-
-        Args:
-            data (ndarray): shape: (num_frames, num_points, num_features)
-            probabilities (ndarray): shape (num_frames, n_components, num_points)
-        Returns:
-            ndarray: h-parameter. shape: (n_components, num_points)
-        """
-        cluster_probs = np.prod(
-            probabilities, axis=0
-        )  # shape: (n_components, num_points)
-        numerator = (
-            self.weights_ * cluster_probs.T
-        ).T  # shape: (n_components, num_points)
-        denominator = np.sum(numerator, axis=0)  # shape: (num_points)
-        return numerator / denominator
-
-    def _update_weights(self, h: ndarray) -> None:
-        """update pi (weights parameter according to equation 50).
-        \f[
-            \pi_i \leftarrow \frac{\sum_{t=1}^N h_{t, i}}{N}
-        \f]
-
-        Args:
-            h (ndarray): shape: (n_components, num_points)
-        """
-        self.weights_ = np.mean(h, axis=1)
-
-    def _update_mean(self, X: ndarray, h: ndarray) -> None:
-        """updates the mean parameter according to equation 51.
-        \f[
-            \mu_i^{(j)} \leftarrow \frac{\sum_{t=1}^N h_{t, i} X_t^{(j)}}{\sum_{t=1}^N h_{t, i}}
-        \f]
-
-        Args:
-            X (ndarray): shape: (num_frames, num_points, num_features)
-            h (ndarray): shape: (n_components, num_points)
-        """
-        num_frames, _, num_features = X.shape
-        # reshape X into -> (num_frames, num_components, num_points, num_features)
-        X = np.tile(X[:, None, :, :], (1, self._n_components, 1, 1))
-        # reshape h into -> (num_frames, num_components, num_points, num_features)
-        h = np.tile(h[None, :, :, None], (num_frames, 1, 1, num_features))
-
-        numerator = np.sum(h * X, axis=2)
-        denominator = np.sum(h, axis=2)
-        self.means_ = numerator / denominator
-
-    def _update_covariances_(self, X: ndarray, h: ndarray) -> None:
-        """updates the covariance parameter according to equation 52
-        \f[
-            \Sigma_i^{(j)} \leftarrow \frac{\sum_{t=1}^N h_{t, i} \left(X_t^{(j)} - \mu_i^{(j)}\right)\left(X_t^{(j)} - \mu_i^{(j)}\right)^T}{\sum_{t=1}^N h_{t, i}}
-        \f]
-
-        Args:
-            X (ndarray): shape: (num_frames, num_points, num_features)
-            h (ndarray): shape: (n_components, num_points)
-        """
-        num_frames = X.shape[0]
-        cov = np.empty_like(self.covariances_)
-        for frame_idx, component_idx in itertools.product(
-            range(num_frames), range(self._n_components)
-        ):
-            frame_data = X[frame_idx]
-            component_mean = self.means_[frame_idx, component_idx]
-            component_h = h[component_idx]
-
-            centered = frame_data - component_mean
-            # shape: (num_points, num_features, num_features)
-            mat_aggregation = np.einsum("ij,ik->ijk", centered, centered)
-            # swap dimensions to: (num_features, num_features, num_points)
-            mat_aggregation = mat_aggregation.transpose(1, 2, 0)
-            # weighted sum and division by h. shape: (num_features, num_features)
-            cov[frame_idx, component_idx] = (mat_aggregation @ component_h) / component_h.sum()
-        
-        # shape: (num_frames, num_num_features, num_features)
-        self.covariances_ = cov
-
-    def _log_likelihood(self, probabilities: ndarray) -> float:
-        """calculates the log likelihood of given probabilities
-        \f[
-            LL = \frac{\sum_{t=1}^N \log\left(\sum_{k=1}^K \pi_k \prod_{j=1}^J\mathcal{N}\left(X_t^{(j)} \mid \mu_k^{(j)}, \Sigma_k^{(j)}\right)\right)}{N}
-        \f]
-
-        Args:
-            probabilities (ndarray): shape: (num_frames, n_components, num_points)
-
-        Returns:
-            float: log likelihood
-        """
-        probabilities = np.prod(probabilities, axis=0)
-        # reshape to: (num_points, n_components)
-        probabilities = probabilities.T
-        weighted_sum = probabilities @ self.weights_  # shape (num_points)
-        return np.sum(np.log(weighted_sum)).item()
-
-    def fit(self, X: ndarray) -> None:
+    def fit(self, X: Tensor) -> None:
         """fits X on the task parameterized gaussian mixture model using K-Means clustering as default initialization method and executes the expectation maximization algorithm: \n
         E-Step:
         self._update_h()
@@ -301,25 +130,25 @@ class TPGMM(ClassificationModule):
         The algorithm stops if \f$LL_{t-1} - LL_t < \textit{self.tol}\f$ with \f$LL_{t}\f$ as the log-likelihood at time t.
 
         Args:
-            X (ndarray): data tensor to fit the the task parameterized gaussian mixture model on. Expected shape: (num_frames, num_points, num_features)
+            X (Tensor): data tensor to fit the the task parameterized gaussian mixture model on. Expected shape: (num_frames, num_points, num_features)
         """
         # perform k-means clustering
         if self._verbose:
             print("Started KMeans clustering")
         self.means_, self.covariances_ = self._k_means(X)
-        self._cov_reg_matrix = identity_like(self.covariances_) * 1e-15
+        self._cov_reg_matrix = identity_like(self.covariances_) * self._reg_factor
 
         if self._verbose:
             print("finished KMeans clustering")
 
         # init weights with uniform probability
         if self.weights_ is None:
-            self.weights_ = np.ones(self._n_components) / self._n_components
+            self.weights_ = torch.ones(self._n_components) / self._n_components
 
         if self._verbose:
             print("Start expectation maximization")
 
-        probabilities = self.gauss_cdf(X)
+        probabilities = self.gauss_pdf(X)
         log_likelihood = self._log_likelihood(probabilities)
         for epoch_idx in range(self._max_iter):
             # Expectation
@@ -331,13 +160,15 @@ class TPGMM(ClassificationModule):
             self._update_covariances_(X, h)
 
             # update probabilities and log likelihood
-            probabilities = self.gauss_cdf(X)
+            probabilities = self.gauss_pdf(X)
             updated_log_likelihood = self._log_likelihood(probabilities)
 
             # Logging
             difference = updated_log_likelihood - log_likelihood
-            if np.isnan(difference):
-                raise ValueError("improvement is nan")
+            # print(updated_log_likelihood)
+            if torch.isnan(torch.tensor(difference)):
+                print(Warning("improvement is nan. Abort fit"))
+                return False
 
             if self._verbose:
                 print(
@@ -352,75 +183,122 @@ class TPGMM(ClassificationModule):
 
             log_likelihood = updated_log_likelihood
 
-    def predict(self, X: ndarray) -> ndarray:
+    def predict(self, X: Tensor) -> Tensor:
         """predict cluster labels for each data point in X
 
         Args:
-            X (ndarray): data in local reference frames. Shape (num_frames, num_points, num_features)
+            X (Tensor): data in local reference frames. Shape (num_frames, num_points, num_features)
 
         Returns:
-            ndarray: the label for each data-point. Shape (num_points)
+            Tensor: the label for each data-point. Shape (num_points)
         """
         probabilities = self.predict_proba(X)
-        labels = np.argmax(probabilities, axis=1)
+        labels = torch.argmax(probabilities, dim=1)
         return labels
 
-    def predict_proba(self, X: ndarray) -> ndarray:
+    def predict_proba(self, X: Tensor) -> Tensor:
         """predict cluster labels for each data point
 
         Args:
-            X (ndarray): data in local reference frames. Shape (num_frames, num_points, num_features)
+            X (Tensor): data in local reference frames. Shape (num_frames, num_points, num_features)
 
         Returns:
-            ndarray: cluster probabilities for each data_point. Shape: (num_points, num_components)
+            Tensor: cluster probabilities for each data_point. Shape: (num_points, num_components)
         """
-        frame_probs = self.gauss_cdf(X)
-        probabilities = np.prod(frame_probs, axis=0).T
+        frame_probs = self.gauss_pdf(X)
+        probabilities = torch.prod(frame_probs, dim=0).T
         return probabilities
 
-    def silhouette_score(self, X: ndarray) -> float:
+    def silhouette_score(self, X: Tensor) -> float:
         """calculated the silhouette score of the model over the given metric and given data x
 
         Args:
-            X (ndarray): data in expected shape: (num_frames, num_points, num_features)
+            X (Tensor): data in expected shape: (num_frames, num_points, num_features)
             metric (str): _description_. Defaults to "euclidean".
         """
         labels = self.predict(X)
         scores = np.empty(X.shape[0])
         for frame_idx in range(X.shape[0]):
-            scores[frame_idx] = metrics.silhouette_score(X[frame_idx], labels)
-        weights = np.tile(self.weights_[:, None], (1, X.shape[0]))
+            scores[frame_idx] = metrics.silhouette_score(X[frame_idx].numpy(), labels.numpy())
+        weights = self.weights_[:, None].repeat(1, X.shape[0])
         weighted_sum = (weights @ scores) / (self.weights_ * X.shape[0])
         return weighted_sum.mean()
 
-    def score(self, X: ndarray) -> float:
+    def score(self, X: Tensor) -> float:
         """calculate log likelihood score given data
 
         Args:
-            X (ndarray): data tensor with expected shape (num_frames, num_points, num_features)
+            X (Tensor): data tensor with expected shape (num_frames, num_points, num_features)
 
         Returns:
             float: log likelihood of given data
         """
-        probabilities = self.gauss_cdf(X)
+        probabilities = self.gauss_pdf(X)
         score = self._log_likelihood(probabilities)
         return score
 
-    def bic(self, X: ndarray) -> float:
+    def bic(self, X: Tensor) -> float:
         """calculates the bayesian information criterion as in
 
         https://scikit-learn.org/stable/modules/linear_model.html#aic-bic
 
         Args:
-            X (ndarray): data tensor with expected shape (num_frames, num_points, num_features)
+            X (Tensor): data tensor with expected shape (num_frames, num_points, num_features)
 
         Returns:
             float: bic score
         """
         num_points = X.shape[1]
         log_likelihood = self.score(X)
-        bic = -2 * log_likelihood + np.log(num_points) * self._n_components
+        bic = -2 * log_likelihood + np.log(num_points) * self._num_params()
         return bic
+
+    def aic(self, X: Tensor) -> float:
+        """calculates the akaike information criterion as in
+
+        https://scikit-learn.org/stable/modules/linear_model.html#aic-bic
+
+        Args:
+            X (Tensor): data tensor with expected shape (num_frames, num_points, num_features)
+
+        Returns:
+            float: aic score
+        """
+        log_likelihood = self.score(X).numpy()
+        bic = -2 * log_likelihood + 2 * self._num_params()
+        return bic
+
+    def gauss_pdf(self, X: Tensor) -> Tensor:
+        """calculate the gaussian probability for a given data set.
+        \f[
+            \mathcal{N}\left(X_t^{(j)} \mid \mu_i^{(j)}, \Sigma_i^{(j)}\right) = \frac{1}{\sqrt{(2\pi)^D|\Sigma_i^{(j)}|}} \exp \left( \frac{1}{2}(X_t^{(j)} - \mu_i^{(j)})\Sigma_i^{(j), -1}(X_t^{(j)} - \mu_i^{(j)})^T\right)
+        \f]
+
+        Variable explanation:
+        D ... number of features
+
+        Args:
+            X (Tensor): data with shape: (num_frames, num_points, num_features)
+
+        Returns:
+            Tensor: probability shape (num_frames, n_components, num_points)
+        """
+        num_frames, num_points, _ = X.shape
+        probs = torch.empty((num_frames, self._n_components, num_points))
+        # to prevent singularity matrices
+        covariances = self.covariances_ + self._cov_reg_matrix
+        for frame_idx, component_idx in itertools.product(
+            range(num_frames), range(self._n_components)
+        ):
+            frame_data = X[frame_idx]
+            cluster_mean = self.means_[frame_idx, component_idx]
+            cluster_cov = covariances[frame_idx, component_idx]
+            distr = torch.distributions.MultivariateNormal(cluster_mean, cluster_cov)
+            probs[frame_idx, component_idx] = torch.exp(distr.log_prob(frame_data))
+            # probs[frame_idx, component_idx] = multivariate_normal.pdf(
+            #     frame_data, cluster_mean, cluster_cov
+            # )
+        return probs
 
     @property
     def config(self) -> Dict[str, Any]:
@@ -439,3 +317,153 @@ class TPGMM(ClassificationModule):
 
         config = {**config, **super().config}
         return config
+
+    def _num_params(self) -> int:
+        """computes the number of parameters the model has internally
+        This means it is the sum of:
+        - num_frames * num_components (mean)
+        - num_frames * num_components * (num_components + 1) // 2 (covariances)
+        - num_components - 1 (weights)
+
+        Returns:
+            int: number of parameters of TPGMM
+        """
+        num_frames = 2
+
+        num_mean_params = self._n_components * num_frames
+        num_cov_params = num_frames * self._n_components * (self._n_components + 1) // 2
+        num_weight_params = self._n_components - 1
+        num_params = num_mean_params + num_cov_params + num_weight_params
+        return num_params
+    
+    def _k_means(
+        self,
+        X: Tensor,
+    ) -> Tuple[Tensor, Tensor]:
+        """calculate k means clustering on each frame and calculates the
+            empirical covariance matrix for each cluster.
+
+        For more details on k means clustering algorithm please refer to: https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html
+
+        Args:
+            X (Tensor): data in feature space for k means clustering.
+                shape: (num_frames, num_points, num_features)
+
+        Returns:
+            Tuple[Tensor, Tensor]:
+             - means with shape: (num_frames, n_components, num_features)
+             - covariance matrix with shape: (num_frames, n_components, num_features, num_features)
+        """
+        num_frames, _, num_features = X.shape
+        means = torch.empty((num_frames, self._n_components, num_features))
+        covariances = torch.empty(
+            (num_frames, self._n_components, num_features, num_features)
+        )
+        for frame_idx, frame_data in enumerate(X):
+            self._k_means_algo.fit(frame_data.detach().numpy())
+            # get mean
+            means[frame_idx] = torch.from_numpy(self._k_means_algo.cluster_centers_)
+            for cluster_idx in range(self._n_components):
+                data_idx = np.argwhere(
+                    self._k_means_algo.labels_ == cluster_idx
+                ).squeeze()
+                covariances[frame_idx, cluster_idx] = torch.from_numpy(
+                    np.cov(frame_data[data_idx].T)
+                )
+
+        # regularization
+        reg_matrix = identity_like(covariances) * self._reg_factor
+        covariances += reg_matrix
+        return means, covariances
+
+    def _update_h(self, probabilities: Tensor) -> Tensor:
+        """update h parameter according to equation 49 in appendix 1
+        \f[
+            h_{t, i} = \frac{\pi_i \prod_{j=1}^P \mathcal{N}\left(X_t^{(j)} \mid \mu_i^{(j)}, \Sigma_i^{(j)}\right)}{\sum_{k=1}^K \pi_k \prod_{j=1}^P \mathcal{N}\left(X_t^{(j)} \mid \mu_k^{(j)}, \Sigma_k^{(j)}\right)}
+        \f]
+
+        Args:
+            data (Tensor): shape: (num_frames, num_points, num_features)
+            probabilities (Tensor): shape (num_frames, n_components, num_points)
+        Returns:
+            Tensor: h-parameter. shape: (n_components, num_points)
+        """
+        cluster_probs = torch.prod(
+            probabilities, dim=0
+        )  # shape: (n_components, num_points)
+        numerator = (
+            self.weights_ * cluster_probs.T
+        ).T  # shape: (n_components, num_points)
+        denominator = torch.sum(numerator, dim=0)  # shape: (num_points)
+        h = numerator / denominator
+        h[numerator == 0] = 0
+        return h
+
+    def _update_weights(self, h: Tensor) -> None:
+        """update pi (weights parameter according to equation 50).
+        \f[
+            \pi_i \leftarrow \frac{\sum_{t=1}^N h_{t, i}}{N}
+        \f]
+
+        Args:
+            h (Tensor): shape: (n_components, num_points)
+        """
+        self.weights_ = torch.mean(h, dim=1)
+
+    def _update_mean(self, X: Tensor, h: Tensor) -> None:
+        """updates the mean parameter according to equation 51.
+        \f[
+            \mu_i^{(j)} \leftarrow \frac{\sum_{t=1}^N h_{t, i} X_t^{(j)}}{\sum_{t=1}^N h_{t, i}}
+        \f]
+
+        Args:
+            X (Tensor): shape: (num_frames, num_points, num_features)
+            h (Tensor): shape: (n_components, num_points)
+        """
+        num_frames, _, num_features = X.shape
+        # reshape X into -> (num_frames, num_components, num_points, num_features)
+        X = X[:, None].repeat(1, self._n_components, 1, 1)
+        # reshape h into -> (num_frames, num_components, num_points, num_features)
+        h = h[None, ..., None].repeat(num_frames, 1, 1, num_features)
+        
+        numerator = torch.sum(h * X, dim=2)
+        denominator = torch.sum(h, dim=2)
+        means = numerator / denominator
+        means[numerator == 0] = 0
+        self.means_ = means
+
+    def _update_covariances_(self, X: Tensor, h: Tensor) -> None:
+        """updates the covariance parameter according to equation 52
+        \f[
+            \Sigma_i^{(j)} \leftarrow \frac{\sum_{t=1}^N h_{t, i} \left(X_t^{(j)} - \mu_i^{(j)}\right)\left(X_t^{(j)} - \mu_i^{(j)}\right)^T}{\sum_{t=1}^N h_{t, i}}
+        \f]
+
+        Args:
+            X (Tensor): shape: (num_frames, num_points, num_features)
+            h (Tensor): shape: (n_components, num_points)
+        """
+        x_centered = X[..., None, :] - self.means_[:, None]
+        prod = torch.einsum("ijkh,ijkl,kj->ikhl", x_centered.float(), x_centered.float(), h)
+        cov = prod / h.sum(dim=1)[None, :, None, None]
+        cov[prod == 0.0] = 0.0
+
+        self.covariances_ = cov
+
+    def _log_likelihood(self, densities: Tensor) -> float:
+        """calculates the log likelihood of given densities
+        \f[
+            LL = \frac{\sum_{t=1}^N \log\left(\sum_{k=1}^K \pi_k \prod_{j=1}^J\mathcal{N}\left(X_t^{(j)} \mid \mu_k^{(j)}, \Sigma_k^{(j)}\right)\right)}{N}
+        \f]
+
+        Args:
+            densities (Tensor): shape: (num_frames, n_components, num_points)
+
+        Returns:
+            float: log likelihood
+        """
+        densities = torch.prod(densities, dim=0)
+        weighted_sum = self.weights_ @ densities   # shape (num_points)
+        # stabilize training by replaying a small constant to 
+        weighted_sum += torch.ones_like(weighted_sum) * 1e-18 
+        ll = torch.sum(torch.log(weighted_sum)).item()
+        return ll

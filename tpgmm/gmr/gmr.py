@@ -67,9 +67,9 @@ class GaussianMixtureRegression(RegressionModel):
         cls: "GaussianMixtureRegression", tpgmm: TPGMM, input_idx: Iterable[int]
     ) -> "GaussianMixtureRegression":
         result = cls(
-            weights=tpgmm.weights_,
-            means=tpgmm.means_,
-            covariances=tpgmm.covariances_,
+            weights=tpgmm.weights_.numpy(),
+            means=tpgmm.means_.numpy(),
+            covariances=tpgmm.covariances_.numpy(),
             input_idx=input_idx,
         )
         return result
