@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "tpgmm"
+version = "0.1.0"
+description = ""
+authors = ["Robin Uhrich <robin.uhrich@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "^1.26.4"
+scikit-learn = "^1.4.2"
+matplotlib = "^3.8.4"
+pyaml = "^24.4.0"
+pandas = "^2.2.2"
+torch = "^2.3.0"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+flake8 = "^7.0.0"
+black = {extras = ["jupyter"], version = "^24.4.2"}
+pytest-benchmark = "^4.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
