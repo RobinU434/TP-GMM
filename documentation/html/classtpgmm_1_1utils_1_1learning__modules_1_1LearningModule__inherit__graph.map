@@ -1,8 +1,0 @@
-<map id="tpgmm.utils.learning_modules.LearningModule" name="tpgmm.utils.learning_modules.LearningModule">
-<area shape="rect" id="node1" title="Basic abstract class for a generic learning module." alt="" coords="103,39,296,80"/>
-<area shape="rect" id="node3" href="$classtpgmm_1_1utils_1_1learning__modules_1_1ClassificationModule.html" title=" " alt="" coords="344,5,568,47"/>
-<area shape="rect" id="node5" href="$classtpgmm_1_1utils_1_1learning__modules_1_1RegressionModel.html" title="Basic Regression Model." alt="" coords="355,71,557,112"/>
-<area shape="rect" id="node2" title=" " alt="" coords="5,46,55,73"/>
-<area shape="rect" id="node4" href="$classtpgmm_1_1TPGMM.html" title="This class in an implementation of the task parameterized gaussian mixture model according to Calinon..." alt="" coords="675,13,798,39"/>
-<area shape="rect" id="node6" href="$classtpgmm_1_1gmr_1_1gmr_1_1GaussianMixtureRegression.html" title="This class implements a gaussian mixture regression model." alt="" coords="616,71,857,112"/>
-</map>

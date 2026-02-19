@@ -1,7 +1,0 @@
-<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
-<area shape="rect" id="node1" href="$classtpgmm_1_1TPGMM.html" title="This class in an implementation of the task parameterized gaussian mixture model according to Calinon..." alt="" coords="5,49,128,75"/>
-<area shape="rect" id="node2" href="$classtpgmm_1_1utils_1_1learning__modules_1_1ClassificationModule.html" title=" " alt="" coords="417,5,641,47"/>
-<area shape="rect" id="node3" href="$classtpgmm_1_1utils_1_1learning__modules_1_1LearningModule.html" title="Basic abstract class for a generic learning module." alt="" coords="176,76,369,117"/>
-<area shape="rect" id="node4" href="$classtpgmm_1_1utils_1_1learning__modules_1_1RegressionModel.html" title="Basic Regression Model." alt="" coords="429,105,630,147"/>
-<area shape="rect" id="node5" href="$classtpgmm_1_1gmr_1_1gmr_1_1GaussianMixtureRegression.html" title="This class implements a gaussian mixture regression model." alt="" coords="689,105,931,147"/>
-</map>
