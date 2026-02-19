@@ -1,88 +1,246 @@
-# TaskParameterizedGaussianMixtureModels
+# TPGMM — Task Parameterized Gaussian Mixture Models
 
-## Overview
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
-This repository contains the implementation of two classes: `TPGMM` (Task Parameterized Gaussian Mixture Model) and `GaussianMixtureRegression`. The classes are based on the following signatures:
+A Python library for learning and reproducing robotic trajectories using **Task Parameterized Gaussian Mixture Models** (TP-GMM) and **Gaussian Mixture Regression** (GMR). Supports three computational backends — **NumPy**, **PyTorch**, and **JAX** — with a unified API.
 
-![alt text](figures/TPGMM-wrokflow.png)
+<p align="center">
+  <img src="figures/TPGMM-wrokflow.png" alt="TPGMM Workflow" width="700">
+</p>
 
-### TPGMM (ClassificationModule)
+---
 
-This class is an implementation of the task parameterized Gaussian mixture model according to the paper by Calinon [link](https://calinon.ch/papers/Calinon-JIST2015.pdf). It includes an Expectation Maximization Algorithm with E-Step and M-Step as well as an optimization criterion for log-likelihood. The class is designed to fit trajectories and analyze their components.
+## Features
 
-### GaussianMixtureRegression (RegressionModel)
+- **Multi-backend support** — identical API across NumPy, PyTorch, and JAX
+- **JIT-accelerated JAX backend** — full EM loop compiled via `@jax.jit` for high-throughput workloads
+- **Vectorized Gaussian PDF** — einsum-based implementation across all backends, no Python loops in the hot path
+- **Model selection utilities** — BIC, AIC, silhouette score, and Davies–Bouldin index
+- **GMR regression** — condition on input dimensions to generate smooth output trajectories
+- **Modular architecture** — shared abstract base classes ensure consistent behaviour and documentation
 
-This class implements a Gaussian mixture regression model. It fits a Gaussian mixture regression based on a given Gaussian Mixture model or a Task-Parameterized Gaussian Mixture model. The equations used in the implementation are detailed in the paper by S. Calinon [link](https://calinon.ch/papers/Calinon-JIST2015.pdf).
+## Quick Start
 
-## TPGMM Class
+```python
+from tpgmm.torch import TPGMM, GaussianMixtureRegression
 
-### Methods
+# Fit a TP-GMM on demonstration trajectories
+# X shape: (num_frames, num_points, num_features)
+model = TPGMM(n_components=5)
+model.fit(X)
 
-- `fit(trajectories)`: Fits the TPGMM model to the input trajectories.
-- `predict(new_data)`: Predicts the components for new data based on the trained model.
-
-### Attributes
-
-- `weights_`: Array of weights between Gaussian components.
-- `means_`: Matrix of means for each frame and component.
-- `covariances_`: Matrix of covariance for each frame and component.
-
-### Parameters
-
-- `n_components` (int): Number of components.
-- `tol` (float): Threshold to break from EM algorithm. Defaults to 1e-3.
-- `max_iter` (int): Maximum number of iterations for the expectation maximization algorithm. Defaults to 100.
-- `min_iter` (int): Minimum number of iterations for the expectation maximization algorithm. Defaults to 5.
-- `weights_init` (ndarray): Initial weights between each component. Defaults to None.
-- `means_init` (ndarray): Initial means between each component. Defaults to None.
-- `reg_factor` (float): Regularization factor for the empirical covariance matrix. Defaults to 1e-5.
-- `verbose` (bool): Triggers the print of learning stats. Defaults to False.
-
-For more detailed usage instructions, please refer to the docstrings within the code.
-
-## GaussianMixtureRegression Class
-
-### Methods
-
-- `fit(trajectory)`: Fits the Gaussian Mixture Regression on the provided trajectory data.
-
-### Parameters
-
-- `weights` (ndarray): Array of weights from the TPGMM model.
-- `means` (ndarray): Matrix of means from the TPGMM model.
-- `covariances` (ndarray): Matrix of covariances from the TPGMM model.
-- `input_idx` (list): Index of the input.
-
-For more detailed usage instructions, please refer to the docstrings within the code.
-
-## Example Usage
-
-How to use this model is documented in a example Jupyter-Notebook at [`examples/example.ipynb`](examples/example.ipynb). 
-
-## Run tests
-
-Tests can be found in: `tests/` and executed with:
-
-```bash
-python -m unittest discover tests
+# Reproduce a trajectory via Gaussian Mixture Regression
+gmr = GaussianMixtureRegression.from_tpgmm(model, input_idx=[0])
+gmr.fit(translation, rotation_matrix)
+mu, sigma = gmr.predict(query_points)
 ```
 
-## Acknowledgement
+All three backends expose the same interface:
 
-This repository is the outcome of an internship at [Fraunhofer Italia](https://www.fraunhofer.it/de.html) under the supervision of [Marco Todescato](https://www.linkedin.com/in/marco-todescato/?originalSubdomain=de) during summer 2023.  Thank you for your constant advice and great discussions.  
+```python
+from tpgmm.numpy import TPGMM, GaussianMixtureRegression
+from tpgmm.torch import TPGMM, GaussianMixtureRegression
+from tpgmm.jax   import TPGMM, GaussianMixtureRegression
+```
 
-## Contribution
+---
 
-We welcome contributions to improve the project and encourage community feedback. To contribute, follow these steps:
+## Installation
 
-1. Fork the repository.
-2. Create a new branch.
-3. Make your changes and commit them.
-4. Push your changes to the branch.
-5. Submit a pull request.
+### From PyPI
 
-Before making a significant change, please open an issue to discuss what you would like to change. Ensure that any new or updated code is appropriately tested.
+```bash
+# Base installation (NumPy backend)
+pip install tpgmm
 
-## Support
+# With PyTorch backend
+pip install tpgmm[torch]
 
-For any questions, concerns, or suggestions, submit an issue. We appreciate your feedback and are committed to providing support and addressing any issues you may encounter. If you have found a bug or need assistance, please submit an issue to the issue tracker. We will make every effort to respond to your queries and resolve any problems you may have.
+# With JAX backend
+pip install tpgmm[jax]
+
+# All backends + examples + dev tools
+pip install tpgmm[all]
+```
+
+### For Development (UV)
+
+This project uses [UV](https://github.com/astral-sh/uv) as its package manager.
+
+```bash
+git clone https://github.com/yourusername/TaskParameterizedGaussianMixtureModels.git
+cd TaskParameterizedGaussianMixtureModels
+
+# Install with all dependencies
+uv sync --all-extras
+
+# Or install selectively
+uv sync --extra torch          # PyTorch backend
+uv sync --extra jax            # JAX backend
+uv sync --extra examples       # Jupyter + matplotlib
+uv sync --extra dev            # pytest, ruff, black
+```
+
+---
+
+## Package Structure
+
+```
+tpgmm/
+├── _core/                  # Abstract bases & shared utilities
+│   ├── tpgmm.py            #   BaseTPGMM
+│   ├── gmr.py              #   BaseGMR
+│   ├── learning_modules.py  #   LearningModule, ClassificationModule, RegressionModel
+│   ├── arrays.py            #   Array helpers (subscript, identity_like, get_subarray)
+│   └── stochastic.py        #   Multivariate Gaussian CDF
+├── numpy/                  # NumPy backend
+│   ├── tpgmm.py
+│   └── gmr.py
+├── torch/                  # PyTorch backend
+│   ├── tpgmm.py
+│   └── gmr.py
+├── jax/                    # JAX backend (JIT-compiled EM)
+│   ├── tpgmm.py
+│   └── gmr.py
+└── utils/                  # I/O, geometry, casting, plotting
+```
+
+All backend implementations inherit from `tpgmm._core`, ensuring a consistent interface and shared documentation.
+
+---
+
+## API Reference
+
+### `TPGMM`
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `n_components` | `int` | — | Number of Gaussian components |
+| `threshold` | `float` | `1e-7` | EM convergence threshold |
+| `max_iter` | `int` | `100` | Maximum EM iterations |
+| `min_iter` | `int` | `5` | Minimum EM iterations |
+| `reg_factor` | `float` | `1e-5` | Covariance regularization factor |
+| `verbose` | `bool` | `False` | Print learning statistics |
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `fit(X)` | Fit the model via K-Means initialization and EM. `X` shape: `(num_frames, num_points, num_features)` |
+| `predict(X)` | Return cluster labels for each data point |
+| `predict_proba(X)` | Return cluster probabilities per data point |
+| `score(X)` | Log-likelihood of the data |
+| `bic(X)` / `aic(X)` | Bayesian / Akaike Information Criterion |
+| `gauss_pdf(X)` | Gaussian PDF across all frames and components |
+
+**Fitted Attributes:** `weights_`, `means_`, `covariances_`
+
+### `GaussianMixtureRegression`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `weights` | array | Component weights from a fitted TPGMM |
+| `means` | array | Component means |
+| `covariances` | array | Component covariances |
+| `input_idx` | `list[int]` | Indices of input (conditioning) features |
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `from_tpgmm(tpgmm, input_idx)` | Class method — create a GMR from a fitted TPGMM |
+| `fit(translation, rotation_matrix)` | Transform TP-GMM into a single GMM for the given task frame |
+| `predict(input_data)` | Return `(mu, sigma)` — conditional mean and covariance |
+
+---
+
+## Examples
+
+Example notebooks are provided in [`examples/`](examples/):
+
+| Notebook | Backend | Description |
+|----------|---------|-------------|
+| [`example_numpy.ipynb`](examples/example_numpy.ipynb) | NumPy | Full TPGMM + GMR pipeline |
+| [`example_torch.ipynb`](examples/example_torch.ipynb) | PyTorch | Full TPGMM + GMR pipeline |
+| [`example_jax.ipynb`](examples/example_jax.ipynb) | JAX | Full TPGMM + GMR pipeline with JIT |
+
+Each notebook walks through data loading, model fitting, model selection (BIC), GMR regression, and trajectory visualization.
+
+```bash
+# Run with pip
+pip install tpgmm[examples,torch]
+jupyter notebook examples/example_torch.ipynb
+
+# Run with UV
+uv sync --extra examples --extra torch
+uv run jupyter notebook examples/example_torch.ipynb
+```
+
+---
+
+## Testing
+
+Tests use [pytest](https://docs.pytest.org/) with [pytest-benchmark](https://pytest-benchmark.readthedocs.io/) for runtime profiling.
+
+```bash
+# With pip
+pip install tpgmm[dev,torch,jax]
+pytest tests/
+
+# With UV
+uv sync --all-extras
+uv run pytest tests/
+```
+
+The test suite covers:
+
+- **Unit tests** — array utilities, casting, file I/O, geometry helpers
+- **Backend tests** — inheritance structure, import paths, integration tests for all three backends
+- **Runtime benchmarks** — comparative timing of NumPy, PyTorch, and JAX backends
+
+---
+
+## Performance
+
+All backends use a vectorized einsum-based Gaussian PDF with no Python loops in the computation. The JAX backend additionally JIT-compiles the full EM iteration for maximum throughput.
+
+Representative benchmark (single-threaded, CPU):
+
+| Backend | Mean | Relative |
+|---------|------|----------|
+| JAX (JIT) | ~10 ms | **1.0×** |
+| PyTorch | ~15 ms | 1.5× |
+| NumPy | ~90 ms | 9× |
+
+> Benchmarks are data- and hardware-dependent. Run `uv run pytest tests/test_runtime.py` to profile on your machine.
+
+---
+
+## Citation
+
+This implementation is based on the TP-GMM framework described by Sylvain Calinon:
+
+> S. Calinon, "A Tutorial on Task-Parameterized Movement Learning and Retrieval,"
+> *Intelligent Service Robotics*, 2016.
+> [Paper](https://calinon.ch/papers/Calinon-JIST2015.pdf)
+
+---
+
+## Acknowledgements
+
+This project originated during an internship at [Fraunhofer Italia](https://www.fraunhofer.it/de.html) under the supervision of [Marco Todescato](https://www.linkedin.com/in/marco-todescato/?originalSubdomain=de) (summer 2023). Thank you for the great advice and discussions.
+
+## Contributing
+
+Contributions are welcome. Please:
+
+1. Fork the repository and create a feature branch.
+2. Ensure your changes include appropriate tests.
+3. Open a pull request with a clear description of the change.
+
+For larger changes, please open an issue first to discuss the approach.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
